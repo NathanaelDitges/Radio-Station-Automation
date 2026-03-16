@@ -1,3 +1,12 @@
+(*
+    Converts selected Finder audio files to MP3 format.
+
+    Uses ffmpeg for .m4a files and sox for other non-MP3 audio files.
+    Activates the "Music-env" conda environment before conversion.
+    Deletes the original file only after the new MP3 is confirmed to exist.
+    Skips files that are already .mp3 and reports any failures at the end.
+*)
+
 use AppleScript version "2.4"
 use scripting additions
 
