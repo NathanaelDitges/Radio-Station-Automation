@@ -647,7 +647,7 @@ on sendPush_notification(theSubject)
 	-- Send an email to IFTTT as a push trigger.
 	tell application "Mail"
 		##Create the message
-		set theMessage to make new outgoing message with properties {sender:"nathanael.ditges@bcmedu.org", subject:(theSubject & " #Automator")}
+		set theMessage to make new outgoing message with properties {sender:"n.d@b---.org", subject:(theSubject & " #Automator")}
 		
 		##Set a recipient
 		tell theMessage
