@@ -17,6 +17,9 @@ These scripts handled the workflow of:
 
 ## Included Scripts
 
+- 'full-cd-import-workflow.scpt' - Main workflow script for full CD import
+
+
 - `batch-audio-to-mp3.scpt` — Batch converts selected audio files to MP3.
 - `batch-convert-wav-m4a-wma-to-mp3.scpt` — Recursively finds and converts WAV, M4A, and WMA files to MP3.
 - `classify-songs-into-music-playlists.scpt` — Manually reviews songs and adds them to Music playlists based on user classification.
