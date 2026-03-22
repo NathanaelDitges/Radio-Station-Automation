@@ -8,171 +8,221 @@
     workflow completes successfully.
 *)
 
+use AppleScript version "2.4" -- Requires Yosemite (10.10) or later
+use scripting additions
+use script "Dialog Toolkit Plus" version "1.1.0"
 
 #<--------- Settings ------------------------->#
-property Song_Type : "Vocal" -- (Insturmental | Vocal)
-property Normal_Answer_forCD_Type : {"Choir", 2}
+property Song_Type : "Vocal" -- (Instrumental | Vocal)
+
+-- Default text and default button behavior for the CD-type dialog.
+-- Example: {"Solo", 0}
+-- 1st item = default text
+-- 2nd item = affects which button is default
+property Normal_Answer_forCD_Type : {"Solo", 0} -- {(Choir|Trio|Octavo|Quartet), (1:not to import XML is default |0: import to XML is default)}
+
+-- If true, wipe/reset the XML file before saving.
 property importresetXML_File : false -- (true | false)
 
-property runOnly_Selected : false -- (true | false) This will messup the XML Files. It is advised to only run as complete CD
+-- If true, only work on the selected tracks rather than the full enabled CD.
+-- In this mode XML is not intended to be created.
+property runOnly_Selected : false -- (true | false) This does not create XML Files.
+
+-- If true, skip conversion and use the selected tracks as-is.
+-- Requires runOnly_Selected to also be true.
+property run_withNo_convertion : false -- runOnly_Selected must be true for this to work
 #<--------- Settings ------------------------->#
 
 
 on run
-	-- Used as a guard to prevent CD ejection if something goes wrong.
-	-- It is set to {} later if the import succeeds.
+	-- Guard value used to decide whether the CD may be ejected at the end.
+	-- It becomes {} when track relocation succeeds.
 	set Bad_Test_noCDejct to "Incomplete" -- This will become null and accept CD ejection when all songs are imported correctly
 	
-	-- Destination folder where processed songs will be written.
+	-- Destination folder for processed songs.
 	set theDestenation_Location to POSIX path of ("/Volumes/BeatDrop/" & Song_Type & "/")
 	
 	tell application "Script Debugger"
-		-- Get the first audio CD source and its main playlist.
+		-- Get the first audio CD source and its main CD playlist.
 		set theCD to first «class cSrc» whose «class pKnd» is «constant eSrckACD»
 		set theCD_playlist to «class cCDP» 1 of theCD
 		
-		-- Read artist, album, and composer from the CD playlist.
+		-- Read album-level metadata from the CD.
 		set {art, alb, cmpsr} to {«class pArt» of theCD_playlist, name of theCD_playlist, «class pCmp» of theCD_playlist}
 		
-		-- Get all enabled tracks from the CD.
+		-- Collect all enabled CD tracks.
 		set theTracks_to_Import to every «class cTrk» of theCD_playlist whose «class enbl» is true
 		
-		-- Holds track numbers that the user marked as bad / unchecked.
+		-- Tracks the user selected as "bad" / unchecked music.
 		set theBad_Music_Tracks to {}
 		
-		if runOnly_Selected is false then
-			-- Collect selected tracks as "bad music" track numbers.
-			repeat with aTrack_to_Import in selection
-				set end of theBad_Music_Tracks to «class pTrN» of aTrack_to_Import & ", "
+		-- Build a list of selected track numbers.
+		repeat with aTrack_to_Import in selection
+			set end of theBad_Music_Tracks to «class pTrN» of aTrack_to_Import & ", "
+		end repeat
+		
+		-- Start building the dialog buttons.
+		set thePressable_Buttons to {"Cancel"}
+		set Bad_Music_Comment to false
+		
+		-- If there are selected "bad" tracks, build the XML note string.
+		if theBad_Music_Tracks is not {} then
+			set theXML_CustomText1_String to "Not: #"
+			repeat with aBad_Music_Track in theBad_Music_Tracks
+				set theXML_CustomText1_String to theXML_CustomText1_String & aBad_Music_Track
 			end repeat
 			
-			-- Build the XML custom text field listing bad tracks.
-			if theBad_Music_Tracks is not {} then
-				set theXML_CustomText1_String to "Not: #"
-				repeat with aBad_Music_Track in theBad_Music_Tracks
-					set theXML_CustomText1_String to theXML_CustomText1_String & aBad_Music_Track
-				end repeat
-				
-				-- Trim the final comma/space and end with semicolon.
-				set theXML_CustomText1_String to (text 1 thru -3 of theXML_CustomText1_String) & ";"
-				
-				-- Ask the user whether to append comments to the bad-song list.
-				set theUsers_Comment to display dialog ¬
-					"Would you like to add comments to the Unchecked Music list?" default answer ¬
-					"" with title ¬
-					"Unchecked Music list" giving up after 20
-				
-				if text returned of theUsers_Comment is not "" then
-					set theXML_CustomText1_String to theXML_CustomText1_String & " (" & (text returned of theUsers_Comment) & ")"
-				end if
-			else
-				-- Default XML text if there are no bad tracks.
-				set theXML_CustomText1_String to "All Good"
-			end if
-			
-			-- Ask the user for additional CD type comments.
-			set theCD_Added_Comments to display dialog ¬
-				"Would you like to add comments to the CD Ablum type? (Choir|Trio)" default answer ¬
-				(first item in Normal_Answer_forCD_Type) buttons ¬
-				{"Cancel", "Completed", "Import"} default button ¬
-				(last item in Normal_Answer_forCD_Type) with title ¬
-				"CD Comments" giving up after 20
-			
-			if text returned of theCD_Added_Comments is not "" then
-				set theAdditional_XML_CD_Type to ", " & (text returned of theCD_Added_Comments)
-			end if
-			
-			-- Tracks whether this album should be marked completed.
-			set XML_Completed to false
-			if button returned of theCD_Added_Comments = "Completed" then
-				set XML_Completed to true
-				log XML_Completed
-				set theAdditional_XML_CD_Type to ""
-			end if
-			
-			log theXML_CustomText1_String
-			
-			-- Convert all enabled CD tracks.
-			set theTracks_Converted to {}
-			repeat with aTrack_to_Import in theTracks_to_Import
-				set end of theTracks_Converted to first item of («event hookConv» aTrack_to_Import)
-			end repeat
+			-- Trim the trailing comma-space and add a semicolon.
+			set theXML_CustomText1_String to (text 1 thru -3 of theXML_CustomText1_String) & ";"
+			set Bad_Music_Comment to true
 		else
-			-- Alternative mode: only convert the currently selected tracks.
-			repeat with aTrack_to_Import in selection
-				set end of theTracks_Converted to first item of («event hookConv» aTrack_to_Import)
-			end repeat
+			-- If no bad tracks were marked, default to "All Good".
+			set theXML_CustomText1_String to "All Good"
 		end if
 		
+		-- Add dialog buttons depending on mode.
+		set end of thePressable_Buttons to "Completed"
+		if runOnly_Selected is false then
+			set end of thePressable_Buttons to "Import"
+		end if
+		
+		-- Calculate which button should be default.
+		set Button_Count to (count items in thePressable_Buttons) - (last item in Normal_Answer_forCD_Type)
+		
+		-- Build a Dialog Toolkit Plus accessory view.
+		set accViewWidth to 350
+		set {theButtons, minWidth} to «event !ASc!CbS» thePressable_Buttons given «class dflt»:Button_Count, «class cbtn»:1
+		if minWidth > accViewWidth then set accViewWidth to minWidth -- Make sure buttons fit.
+		
+		-- Create text field for CD type comments.
+		set {theField, theTop} to «event !ASuCrTf» (first item in Normal_Answer_forCD_Type) given «class !FpL»:(first item in Normal_Answer_forCD_Type), «class !BtM»:0, «class !FwI»:accViewWidth, «class !ExH»:7
+		
+		-- Create label for CD type comments.
+		set {theboldLabel, theTop} to «event !ASuCrLa» "Would you like to add comments to the CD Ablum type?" & return & "For Example: Choir or Trio" given «class !BtM»:theTop + 20, «class !MxW»:accViewWidth, «class !MuS»:«constant !CsZ!CrL»
+		
+		set theContent_Viewed to {theField, theboldLabel}
+		
+		-- If there are bad tracks, add a second text field for comments.
+		if Bad_Music_Comment is true then
+			set {the2Field, theTop} to «event !ASuCrTf» "" given «class !BtM»:theTop + 20, «class !FwI»:accViewWidth, «class !ExH»:7
+			set {the2boldLabel, theTop} to «event !ASuCrLa» "Would you like to add comments to the Unchecked Music list?" given «class !BtM»:theTop + 20, «class !MxW»:accViewWidth, «class !MuS»:«constant !CsZ!CrL»
+			set end of theContent_Viewed to the2Field
+			set end of theContent_Viewed to the2boldLabel
+		end if
+		
+		-- Show the custom dialog.
+		set {buttonName, controlsResults} to «event !AScDiEw» "KCIC CD Import Settings" with «class !AvL» given «class !AvW»:accViewWidth, «class !AvH»:theTop, «class !AvC»:theContent_Viewed, «class btns»:theButtons, «class !AcF»:theField, «class !AiP»:{0, 0}
+		
+		set XML_Completed to false
+		
+		-- Read the results from the dialog fields.
+		set {theBottom_Entry, theTop_Entry} to {first item of controlsResults, item -2 of controlsResults}
+		set theAdditional_XML_CD_Type to ""
+		
+		-- Apply dialog results to XML strings.
+		if theBottom_Entry = theTop_Entry and theBottom_Entry is not "" then
+			set theAdditional_XML_CD_Type to ", " & (theBottom_Entry)
+		else if theBottom_Entry is not theTop_Entry then
+			if theBottom_Entry is not "" then
+				set theAdditional_XML_CD_Type to ", " & (theBottom_Entry)
+			end if
+			if theTop_Entry is not "" then
+				set theXML_CustomText1_String to theXML_CustomText1_String & " (" & theTop_Entry & ")"
+				log theXML_CustomText1_String
+			end if
+		end if
+		
+		-- If the user chose Completed, mark XML as completed and clear extra CD type text.
+		if buttonName = "Completed" then
+			set XML_Completed to true
+			log XML_Completed
+			set theAdditional_XML_CD_Type to ""
+		end if
+		
+		-- Convert or select tracks according to the chosen mode.
+		set theTracks_Converted to {}
+		if run_withNo_convertion is false then
+			if runOnly_Selected is false then
+				-- Normal mode: convert all enabled CD tracks.
+				repeat with aTrack_to_Import in theTracks_to_Import
+					set end of theTracks_Converted to first item of («event hookConv» aTrack_to_Import)
+				end repeat
+			else
+				-- Selection-only mode: convert only the selected tracks.
+				display alert "Converting Selection"
+				repeat with aTrack_to_Import in selection
+					set end of theTracks_Converted to first item of («event hookConv» aTrack_to_Import)
+				end repeat
+			end if
+		else if runOnly_Selected is true then
+			-- No-conversion mode: use the selected tracks directly.
+			display alert "You are not converting these tracks"
+			repeat with aTrack_to_Import in selection
+				set end of theTracks_Converted to aTrack_to_Import
+			end repeat
+		else
+			-- Invalid mode combination.
+			display alert "You must Select a section in the library to be run (possibly the CD needs to be inserted)"
+		end if
 		
 		# -- my personal_notification(alb & ": Imported")
 		
-		
 		if theTracks_Converted is not {} then
-			-- Create a new playlist for the imported album.
+			-- Create a playlist for the imported/processed album.
 			set aNew_Playlist to (make new «class cPly» with properties {name:(art & " - " & alb)})
 			
-			-- This will accumulate XML for the track list.
+			-- This accumulates the per-track XML.
 			set thePreped_Track_XML to {}
 			
-			-- Collect album-level metadata needed for XML creation.
+			-- Album-level XML data that will later be expanded.
 			set theAlbum_Rquired_XMLData to {Song_Type, art, alb, cmpsr, theXML_CustomText1_String, theAdditional_XML_CD_Type}
 			
 			repeat with aConverted_Track in theTracks_Converted
-				-- Duplicate the converted track into the new playlist.
+				-- Duplicate the track into the playlist.
 				duplicate aConverted_Track to aNew_Playlist
 				
-				-- Read metadata from the converted track.
+				-- Read track metadata.
 				set {nom, alb, art, trknum} to {name, «class pAlb», «class pArt», «class pTrN»} of aConverted_Track
 				
-				# repeat while nom contains "'"
-				# set y to offset of "'" in nom
-				# set nom to (text 1 thru (y - 1) of nom) & (text (y + 1) thru -1 of nom)
-				# end repeat
-				
-				-- Replace slashes in track names so they are safer as filenames.
+				-- Replace slashes in the track name so it is safer as a filename.
 				repeat while nom contains "/"
 					set y to offset of "/" in nom
 					set nom to (text 1 thru (y - 1) of nom) & "-" & (text (y + 1) thru -1 of nom)
 				end repeat
 				
-				-- Update track metadata inside Music / iTunes.
+				-- Write updated metadata into the library track.
 				set name of aConverted_Track to nom
 				set «class pCmt» of aConverted_Track to Song_Type
 				set «class pArt» of aConverted_Track to (art & " - " & alb)
 				
-				-- Save current file location.
+				delay 1
+				
+				-- Save original file location.
 				set theSong_Location to get «class pLoc» of aConverted_Track
 				set theDelete_Location to get «class pLoc» of aConverted_Track
 				
 				tell application "Finder"
 					-- Read the current file extension.
 					set theSong_Extension to name extension of theSong_Location
-					#<-- get "theSong_Name" as seen in iTunes with theSong_Extension (ie:"wav")
 					
-					-- Build a new target filename: Album_TrackNumber_SongName.ext
+					-- Build the new filename: Album_TrackNumber_SongName.ext
 					set theSong_Name to (alb & "_" & trknum & "_" & nom) as string
-					
-					-- Replace colons in the filename.
 					repeat while theSong_Name contains ":"
 						set y to offset of ":" in theSong_Name
 						set theSong_Name to (text 1 thru (y - 1) of theSong_Name) & "_" & (text (y + 1) thru -1 of theSong_Name)
 					end repeat
 					
-					-- Build the final destination path.
+					-- Build destination output path.
 					set theNew_Song_Location to theDestenation_Location & theSong_Name & "." & theSong_Extension
-					#<-- "theDestenation_Location" is set to /Volumes/BeatDrop/ and the "Song_Type/" -->#
-					#<-- sets New file location with the iTunes Song Name as file location /v/b/i/~~~.wav -->#
 					
-					-- Convert current track location to POSIX path.
+					-- Convert source path to POSIX string.
 					set theSong_Location to POSIX path of theSong_Location
-					#<-- get the location of the itunes track at riped location /u/bdp/iT/m///~~~.wav	 -->#			
 					
 					-- Build the sox command:
-					-- copy/convert file, trim silence, reverse-trim-reverse, and pad.
+					-- trim silence, reverse-trim-reverse, and pad both ends.
 					set Single_SoxCmd to ("sox \"" & theSong_Location & "\" \"" & theNew_Song_Location & "\" silence 1 0.5 0.5% reverse silence 1 0.5 0.5% reverse pad 0.5 0.5") as string
 					
-					-- Escape exclamation points for shell safety.
+					-- Escape exclamation points for shell use.
 					repeat while Single_SoxCmd contains "!"
 						set y to offset of "!" in Single_SoxCmd
 						set Single_SoxCmd to (text 1 thru (y - 1) of Single_SoxCmd) & ":ReplaceExl:" & (text (y + 1) thru -1 of Single_SoxCmd)
@@ -184,7 +234,7 @@ on run
 					end repeat
 					
 					tell application "Terminal"
-						-- Run the sox command and wait until it finishes.
+						-- Run sox and wait for it to finish.
 						set frontWindow to do script Single_SoxCmd in window 1
 						repeat
 							delay 1
@@ -193,18 +243,18 @@ on run
 					end tell
 					
 					if theSong_Extension is not "" then
-						-- Build a looser search name for later track matching.
+						-- Build a loose search name for later library matching.
 						set theSearch_Name to text 1 thru -2 of nom
 						set theSong_Extension to ("." & theSong_Extension)
 					end if
 					
-					-- Delete the original ripped track file and empty trash.
+					-- Delete the original converted file and empty trash.
 					delete theDelete_Location
 					empty the trash
 					
 				end tell
 				
-				-- Escape exclamation points in the new file path.
+				-- Escape exclamation points in the destination path.
 				repeat while theNew_Song_Location contains "!"
 					set y to offset of "!" in theNew_Song_Location
 					set theNew_Song_Location to (text 1 thru (y - 1) of theNew_Song_Location) & ":replace:" & (text (y + 1) thru -1 of theNew_Song_Location)
@@ -215,20 +265,18 @@ on run
 					set theNew_Song_Location to (text 1 thru (y - 1) of theNew_Song_Location) & "\\!" & (text (y + z) thru -1 of theNew_Song_Location)
 				end repeat
 				
-				-- Find tracks in the library matching the processed song name and album.
+				-- Find matching library tracks and repoint them to the processed file.
 				repeat with aiTunes_Track in (every «class cFlT» whose name contains theSearch_Name and «class pArt» contains alb)
-					
 					try
-						-- Update the Music/iTunes file location to point at the processed file.
 						set «class pLoc» of aiTunes_Track to POSIX file (theNew_Song_Location)
 						set Bad_Test_noCDejct to {}
 					on error errTxt
-						my personal_notification(theNew_Song_Location & ": Error")
+						my sendPush_notification(theNew_Song_Location & ": Error")
 						set Bad_Test_noCDejct to errTxt
 					end try
 				end repeat
 				
-				-- Gather metadata to write into the final audio file.
+				-- Gather metadata for writing back into the final audio file.
 				set aTracks_Required_Metadata to {¬
 					«class pLoc», ¬
 					name, ¬
@@ -243,17 +291,16 @@ on run
 				
 				log «class pLoc» of aiTunes_Track
 				
-				-- Verify required metadata exists.
+				-- Make sure required metadata exists.
 				if (count aTracks_Required_Metadata) is not 4 then return display dialog ¬
 					"Does not have title, artist, or comments!" with title ¬
 					"Add Metadata To Sound Studio File" buttons ¬
 					{"Haha, Try Again!"}
 				
 				tell application "Sound Studio"
-					-- Open the processed audio file.
+					-- Open the processed file.
 					set aSong_Location to {}
 					set aSong_Location to the first item of aTracks_Required_Metadata
-					
 					set D to open POSIX path of (aSong_Location)
 					
 					-- Write core metadata.
@@ -263,7 +310,7 @@ on run
 						comments ¬
 							} to the rest of aTracks_Required_Metadata
 					
-					-- Write optional metadata if present.
+					-- Write optional metadata where available.
 					try
 						tell the metadata of D to set {album} to aTracks_Album_Metadata
 					end try
@@ -280,7 +327,7 @@ on run
 						tell the metadata of D to set {composer} to aTracks_Composer_Metadata
 					end try
 					
-					-- Force genre to Religious.
+					-- Force genre.
 					tell the metadata of D to set genre to ("Religious")
 					
 					save D
@@ -288,64 +335,68 @@ on run
 					log D
 				end tell
 				
-				-- Convert duration from raw integer to mm:ss.
+				-- Convert track duration to mm:ss for XML.
 				set dur to («class pDur» of aConverted_Track) as integer
 				set durmin to (dur div minutes) as integer
 				set dursec to (dur mod minutes) as integer
 				if (count (dursec as string)) as integer = 1 then set dursec to "0" & dursec
 				set dur to (durmin & ":" & dursec) as string
 				
-				-- Package track data for XML.
+				-- Package this track's XML data.
 				set aTracks_Required_XMLdata to {¬
 					art, ¬
 					dur, ¬
 					nom, ¬
 					trknum ¬
 						}
-				
-				-- Append this track's XML.
 				set thePreped_Track_XML to my setTrack_XML_for(aTracks_Required_XMLdata, thePreped_Track_XML)
 			end repeat
 			
-			-- Add total track count to album-level XML data.
+			-- Add total track count to the album XML data.
 			set end of theAlbum_Rquired_XMLData to {«class pTrC»} of first item in theTracks_Converted
 			
-			-- Open the XML tree for the current song type.
+			-- Open the XML tree for the chosen song type.
 			set theXML_Tree to my getXML_Root_from(Song_Type)
-			
 			if importresetXML_File is false then
-				
-				-- Get next album key and check whether album already exists.
+				-- Get the next album key and see whether the album is already present.
 				set end of theAlbum_Rquired_XMLData to my getLast_Album_Number_in(theXML_Tree)
 				set find_Album_XML to my checkAlbum_XML_inCDpedia(theAlbum_Rquired_XMLData)
 				
 				if find_Album_XML is false then
-					-- Add album and save XML if it does not already exist.
-					my addAlbum_XML_to(theXML_Tree, theAlbum_Rquired_XMLData, thePreped_Track_XML)
-					my saveNew_XML_Tree(theXML_Tree, Song_Type)
+					-- Notify if XML completion state and existing XML state conflict.
+					if XML_Completed is not find_Album_XML then
+						my sendPush_notification("Double Check XML File for " & alb)
+						log ("Alert: Double Check XML File for " & alb)
+					end if
+					
+					-- Only add XML when not marked completed.
+					if XML_Completed is false then
+						my addAlbum_XML_to(theXML_Tree, theAlbum_Rquired_XMLData, thePreped_Track_XML)
+						my saveNew_XML_Tree(theXML_Tree, Song_Type)
+					end if
 				end if
 			else
-				-- Reset XML file before import if requested.
+				-- Reset then save the XML file.
 				my resetXML_for_Import(theXML_Tree, Song_Type)
 				my saveNew_XML_Tree(theXML_Tree, Song_Type)
 			end if
 		end if
 		
-		-- Move the import playlist into the folder playlist matching Song_Type.
+		-- Move the playlist into the folder playlist named after Song_Type.
 		move aNew_Playlist to «class cFoP» Song_Type
 		
 		-- If everything succeeded, eject the CD and notify the user.
 		if Bad_Test_noCDejct is {} then
 			«event aevtejct»
 			my personal_notification(alb & ": Complete")
-			my sendPush_notification(alb)
+			my sendPush_notification(alb & " is Complete")
 			return (alb & ": Complete")
 		end if
 	end tell
 end run
 
 to personal_notification(textMessage)
-	-- Send an iMessage notification to a specific contact.
+	-- Send an iMessage.
 	tell application "Messages"
 		set targetBuddy to "+19702349148"
 		set targetService to id of 1st account whose service type = iMessage
@@ -383,7 +434,7 @@ on getXML_Root_from(Song_Type)
 end getXML_Root_from
 
 on getLast_Album_Number_in(theXML_Tree)
-	-- Return the highest album key currently in the XML, or 0 if none exist.
+	-- Return the highest album key currently in the XML tree.
 	set aNew_Album_Key to {}
 	set theAlbum_Number to «event XML gttx» («event XML path» theXML_Tree given «class with»:"dict/key")
 	try
@@ -395,7 +446,7 @@ on getLast_Album_Number_in(theXML_Tree)
 end getLast_Album_Number_in
 
 on findUncheck_Songs_from(theXML_Tree_Root, withAlbum_Identity)
-	-- Look up album entries and extract customText1 check data.
+	-- Find album entries and extract their customText1 bad-track info.
 	set theAlbums to {}
 	set theUncheced_Track_Numbers to {}
 	repeat with anAlbum in («event XML path» theXML_Tree_Root given «class with»:("dict/dict[string=\"" & (withAlbum_Identity) as string) & "\"]")
@@ -411,7 +462,7 @@ on findUncheck_Songs_from(theXML_Tree_Root, withAlbum_Identity)
 end findUncheck_Songs_from
 
 on addAlbum_XML_to(theXML_Tree, With_thisAlbums_Data, andTrack_XML)
-	-- Unpack album data used to build the XML album node.
+	-- Unpack album-level data for building the XML dictionary.
 	set {Song_Type, ¬
 		Ablum_Artist, ¬
 		Ablum_Name, ¬
@@ -422,10 +473,8 @@ on addAlbum_XML_to(theXML_Tree, With_thisAlbums_Data, andTrack_XML)
 		Key_Number ¬
 			} to With_thisAlbums_Data
 	
-	-- Build the new key element.
+	-- Build the XML key and album dictionary block.
 	set theKey_Data to "<key>" & ((Key_Number) + 1) & "</key>"
-	
-	-- Build the album dictionary XML block.
 	set theDict_Data to "<dict>
 		<key>artist</key>
 		<string>" & Ablum_Artist & "</string>
@@ -479,30 +528,38 @@ on addAlbum_XML_to(theXML_Tree, With_thisAlbums_Data, andTrack_XML)
 		<integer>0</integer>
 	</dict>"
 	
-	-- Insert album XML at the appropriate place depending on current key count.
+	-- Escape ampersands before inserting into XML.
+	set theDict_Data to my replaceCharacter("&", "&amp;", theDict_Data)
+	set theKey_Data to my replaceCharacter("&", "&amp;", theKey_Data)
+	
+	-- Insert XML depending on the current album key count.
 	if (Key_Number) as integer = 0 then
 		set theDictionary_Level to «event XML path» theXML_Tree given «class with»:"dict"
+		log ("XMLKey " & Key_Number & "-1dict")
 		log («event XML disp» theDictionary_Level)
 		set theNew_Album_key to «event XML addc» theKey_Data given «class at  »:theDictionary_Level
 		set theAlbum_Level to «event XML path» theXML_Tree given «class with»:"dict/key"
+		log ("1alblvl ")
 		log («event XML disp» theAlbum_Level)
 		set theNew_Album_dict to «event XML adds» theDict_Data given «class afte»:theAlbum_Level
-	else if (Key_Number) as integer = 1 then
+	else if ((Key_Number) as integer) = 1 then
 		set theAlbum_Level to «event XML path» theXML_Tree given «class with»:"dict/dict"
+		log ("XMLKey " & Key_Number & "-2 ")
 		log («event XML disp» theAlbum_Level)
-		set theNew_Album_dict to «event XML adds» theDict_Data given «class afte»:theAlbum_Level -- This is placed directly after
-		set theNew_Album_key to «event XML adds» theKey_Data given «class afte»:theAlbum_Level -- This is then placed between the theAlbum_Level and before theDict_Data
+		set theNew_Album_dict to «event XML adds» theDict_Data given «class afte»:theAlbum_Level
+		set theNew_Album_key to «event XML adds» theKey_Data given «class afte»:theAlbum_Level
 	else
 		set theAlbum_Level to «event XML path» theXML_Tree given «class with»:"dict/dict"
+		log ("XMLKey " & Key_Number & "-3 ")
 		log («event XML disp» theAlbum_Level)
-		set theNew_Album_dict to «event XML adds» theDict_Data given «class afte»:(last item of theAlbum_Level) -- This is placed directly after
-		set theNew_Album_key to «event XML adds» theKey_Data given «class afte»:(last item of theAlbum_Level) -- This is then placed between the theAlbum_Level and before theDict_Data
+		set theNew_Album_dict to «event XML adds» theDict_Data given «class afte»:(last item in theAlbum_Level)
+		set theNew_Album_key to «event XML adds» theKey_Data given «class afte»:(last item in theAlbum_Level)
 	end if
 	return theXML_Tree
 end addAlbum_XML_to
 
 on checkAlbum_XML_inCDpedia(With_thisAlbums_Data)
-	-- Check whether this album already exists in the Complete XML library.
+	-- Check whether the album already exists in the Complete XML library.
 	set theXML_Tree to my getXML_Root_from("Complete")
 	set {Song_Type, ¬
 		Ablum_Artist, ¬
@@ -515,7 +572,6 @@ on checkAlbum_XML_inCDpedia(With_thisAlbums_Data)
 			} to With_thisAlbums_Data
 	
 	set XML_track_found to false
-	
 	repeat with anIdentifyed_Ablum in «event XML path» theXML_Tree given «class with»:("dict/dict[string=\"" & ((Ablum_Name) as string) & "\"]")
 		set anIdentifyed_Ablums_Text to «event XML gttx» anIdentifyed_Ablum
 		
@@ -526,18 +582,16 @@ on checkAlbum_XML_inCDpedia(With_thisAlbums_Data)
 		set checkAlbums_Track_Count to «class mRes» of («event SATIFINd» "(?<=numberOfTracks).{" & x & "}" with «class UsGR» given «class $in »:(anIdentifyed_Ablums_Text))
 		
 		log checkAlbums_Artist & ", " & Ablum_Artist & ", " & checkAlbums_Track_Count & ", " & Album_Tracks
-		
 		if checkAlbums_Artist contains Ablum_Artist and checkAlbums_Track_Count contains Album_Tracks then
 			set XML_track_found to true
 			log XML_track_found
 		end if
 	end repeat
-	
 	return XML_track_found
 end checkAlbum_XML_inCDpedia
 
 on setTrack_XML_for(thisTracks_data, After_thisXML)
-	-- Append one track dictionary to the XML track list.
+	-- Append one track dictionary block to the XML track list.
 	set {¬
 		art, ¬
 		dur, ¬
@@ -546,7 +600,6 @@ on setTrack_XML_for(thisTracks_data, After_thisXML)
 			} to thisTracks_data
 	log dur
 	
-	#set dur to my replaceCharacter(".", ":", dur)
 	if last item in thisTracks_data is 1 then
 		set theTracks_Full_XML to "<dict>
 			<key>artist</key>
@@ -575,14 +628,14 @@ on setTrack_XML_for(thisTracks_data, After_thisXML)
 end setTrack_XML_for
 
 on saveNew_XML_Tree(theXML_Tree, Song_Type)
-	-- Save the updated XML tree back to the desktop CDPedia package.
+	-- Save the XML tree back to the desktop CDPedia package.
 	set tothePath to ((path to desktop) as Unicode text) & Song_Type & ".cdpedia:info.xml"
 	«event XML save» theXML_Tree given «class kfil»:file tothePath
 	set the_file to tothePath as alias
 end saveNew_XML_Tree
 
 on resetXML_for_Import(theXML_Tree, Song_Type)
-	-- Open the CDPedia package and clear its main dictionary content.
+	-- Open the CDPedia package and remove its main dictionary contents.
 	tell application "Finder" to open file ((path to desktop folder as text) & Song_Type & ".cdpedia") using ((path to applications folder as text) & "CDpedia.app")
 	delay 3
 	set theDictionary_Level to «event XML path» theXML_Tree given «class with»:"dict"
@@ -590,18 +643,15 @@ on resetXML_for_Import(theXML_Tree, Song_Type)
 	return theXML_Tree
 end resetXML_for_Import
 
-on sendPush_notification(recipientAddress, theSubject)
-	-- Send an email-based push/notification message.
+on sendPush_notification(theSubject)
+	-- Send an email to IFTTT as a push trigger.
 	tell application "Mail"
-		set recipientAddress to "someemail@here.com"
-		set theSubject to "Type your subject here!"
-		
 		##Create the message
-		set theMessage to make new outgoing message with properties {sender:"nathanael.ditges@bcmedu.org", subject:theSubject}
+		set theMessage to make new outgoing message with properties {sender:"nathanael.ditges@bcmedu.org", subject:(theSubject & " #Automator")}
 		
 		##Set a recipient
 		tell theMessage
-			make new to recipient with properties {address:recipientAddress}
+			make new to recipient with properties {address:"trigger@applet.ifttt.com"}
 			
 			##Send the Message
 			send
